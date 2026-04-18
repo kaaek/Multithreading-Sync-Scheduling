@@ -28,12 +28,14 @@
 char* pathToFile;
 
 typedef struct {
+    int threadId;
     const char *wordQuery;
     int linesReadFd;
     int countsWriteFd; 
 } ThreadArguments;
 
-void initThreadArguments(ThreadArguments* threadArguments, const char *wordQuery, int linesReadFd, int countsWriteFd){
+void initThreadArguments(ThreadArguments* threadArguments, int threadId, const char *wordQuery, int linesReadFd, int countsWriteFd){
+    threadArguments->threadId = threadId;
     threadArguments->wordQuery = wordQuery;
     threadArguments->linesReadFd = linesReadFd;
     threadArguments->countsWriteFd = countsWriteFd;
@@ -61,15 +63,20 @@ void* threadFunction(void *arg) {
     char lineBuffer[256]; // Buffer to store the current line's content
     int localWordCount = 0;
 
+    printf("[Thread %d] Started. Waiting for lines...\n", threadArguments->threadId);
+
     while (1) {
         ssize_t bytesRead = read(threadArguments->linesReadFd, lineBuffer, sizeof(lineBuffer)); // Read from own's read end duplicate of the lines pipe
         if (bytesRead == 0) {
+            printf("[Thread %d] Reached EOF on lines pipe.\n", threadArguments->threadId);
             break;
         }
         if (bytesRead < 0) {
             if (errno == EINTR) {
+                printf("[Thread %d] Read interrupted by signal, retrying.\n", threadArguments->threadId);
                 continue;
             }
+            perror("[Thread] read failed");
             break;
         }
 
@@ -79,12 +86,17 @@ void* threadFunction(void *arg) {
             lineBuffer[sizeof(lineBuffer) - 1] = '\0';
         }
 
-        localWordCount += countOccurrencesInLine(lineBuffer, threadArguments->wordQuery);
+        int matches = countOccurrencesInLine(lineBuffer, threadArguments->wordQuery);
+        localWordCount += matches;
+        printf("[Thread %d] Processed line chunk (%zd bytes), matches in chunk: %d, local total: %d\n",
+               threadArguments->threadId, bytesRead, matches, localWordCount);
     }
 
+    printf("[Thread %d] Sending local count %d to main thread.\n", threadArguments->threadId, localWordCount);
     write(threadArguments->countsWriteFd, &localWordCount, sizeof(localWordCount));
     close(threadArguments->linesReadFd);
     close(threadArguments->countsWriteFd);
+    printf("[Thread %d] Finished.\n", threadArguments->threadId);
     return NULL;
 }
 
@@ -126,6 +138,8 @@ int main(int argc, char *argv[]) {
         return EXIT_ERROR;
     }
 
+    printf("[Main] File: %s | Query: \"%s\" | Threads: %d\n", pathToFile, query, numberOfThreads);
+
     pthread_t threads[numberOfThreads];
     ThreadArguments threadArguments[numberOfThreads];
 
@@ -143,11 +157,13 @@ int main(int argc, char *argv[]) {
             return EXIT_ERROR;
         }
 
-        initThreadArguments(&threadArguments[i], query, dupLinesRead, dupCountWrite);
+        initThreadArguments(&threadArguments[i], i, query, dupLinesRead, dupCountWrite);
         if (pthread_create(&threads[i], NULL, threadFunction, &threadArguments[i]) != 0) {
             perror("pthread_create failed");
             return EXIT_ERROR;
         }
+
+        printf("[Main] Created worker thread %d (linesReadFd=%d, countsWriteFd=%d).\n", i, dupLinesRead, dupCountWrite);
     }
 
     close(linesPipe[0]); // Main does not read from this end.
@@ -155,7 +171,9 @@ int main(int argc, char *argv[]) {
 
     // Write file to lines pipe
     char lineBuffer[256];                                           // Buffer to store the current line's content
+    int lineNumber = 0;
     while (fgets(lineBuffer, sizeof(lineBuffer), filePointer)) {    // Read the file
+        lineNumber++;
         ssize_t bytesWritten = write(linesPipe[1], lineBuffer, sizeof(lineBuffer)); // Write fixed-size messages to preserve line boundaries
         if (bytesWritten != (ssize_t)sizeof(lineBuffer)) {
             perror("write to lines pipe failed");
@@ -163,21 +181,28 @@ int main(int argc, char *argv[]) {
             fclose(filePointer);
             return EXIT_ERROR;
         }
+        printf("[Main] Dispatched line %d to worker pool (%zd bytes).\n", lineNumber, bytesWritten);
     }
+    printf("[Main] Finished dispatching %d lines. Closing write end of lines pipe.\n", lineNumber);
     close(linesPipe[1]); // Close write end after finishing writing
     fclose(filePointer); // Close the file
 
     // Read results
     for (int i = 0; i < numberOfThreads; i++) {
         pthread_join(threads[i], NULL);
+        printf("[Main] Joined worker thread %d.\n", i);
     }
 
     int wordCount = 0;
     int totalWordCount = 0;
+    int contributors = 0;
     while (read(countPipe[0], &wordCount, sizeof(wordCount)) > 0) {
+        contributors++;
         totalWordCount = totalWordCount + wordCount; // Read word counts as they come from all the threads, and sum them up as you go.
+        printf("[Main] Received partial count %d (contributors so far: %d, running total: %d).\n",
+               wordCount, contributors, totalWordCount);
     }
     close(countPipe[0]);
 
-    printf("Final word count = %d\n", totalWordCount);
+    printf("[Main] Final word count = %d\n", totalWordCount);
 }

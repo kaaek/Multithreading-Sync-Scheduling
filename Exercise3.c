@@ -13,7 +13,6 @@
  * Similarly, consumers are given priority once the buffer is full.
  */
 
-
 #define BUFFER_SIZE 64
 #define NUMBER_PRODUCERS 3
 #define NUMBER_CONSUMERS 3
