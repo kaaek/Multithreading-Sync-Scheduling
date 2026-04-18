@@ -5,6 +5,22 @@
 #include <pthread.h>
 #include <errno.h>
 
+/*
+ *  USAGE: Exercise2.o <Filename> <Search word> <Number of worker threads>
+ *
+ * This exercise demonstrates multithreading using pipes: the main program receives the name of a file to read from, a word to search for, and a number M of threads to create.
+ * Communication between the main program and worker threads happens via two pipes: the line pipe and word count pipe.
+ * The main program opens the file, then creates M threads and passes to each: a duplicate of the read end of the line pipe, and a duplicate of the write end of the word count pipe.
+ * The main program writes each line of the file into the line pipe.
+ * On the other end: each worker thread waits to read this line. Then the thread that is scheduled first (read/write in pipes is atomic), reads the line.
+ * Once a thread reads, it fetches the query word and notes the number of occurences. Each thread has its own tally count.
+ * This repeats as the main program writes the file line-by-line into the line pipe.
+ * Once the main program closes the write end of the pipe, the worker threads stop hanging at read and know it is time to report.
+ * Each thread writes its count to the write end of the word count pipe (each worker thread has a duplicate of this end of the pipe).
+ * The main program sums the results to get the total occurences.
+ * Compiling & running prints the total number of occurences of a word.
+ */
+
 #define PIPE_ERROR "Could not create pipe"
 #define FILE_ERROR "Could not open file"
 #define EXIT_ERROR 1

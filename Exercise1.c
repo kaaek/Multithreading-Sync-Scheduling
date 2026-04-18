@@ -4,6 +4,12 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <time.h>
+/*
+ * This exercise demonstrates multithreading scheduling using semaphores: a number M of bank accounts are shared among N threads.
+ * Each bank account's balance is protected by a semaphore to avoid race conditions.
+ * The global ledger is also protected by its own semaphore to avoid multiple threads writing to the same address at the same time.
+ * Compiling & running prints a log including: all the accounts' initial balances, transaction logs, and final balances.
+ */
 
 #define NUMBER_ITERATIONS 10
 #define NUMBER_BANK_ACCOUNTS 5
